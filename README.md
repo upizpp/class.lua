@@ -12,5 +12,5 @@ Help with object-oriented programming in Lua.
 可设置__metas__为类对象设置元方法（无法设置__index和__newindex）；  
 可设置__setters__和__getters__设置类成员的setter和getter；  
 每个setter函数的参数：self, value；  
-每个gtter函数的参数：self；  
+每个getter函数的参数：self；  
 

@@ -12,6 +12,14 @@ local function safe_setmetatable(table, meta)
 	end
 end
 
+function class:get_class(class_name)
+	return self.data[self:get_full_path(class_name)]
+end
+
+function class:is_extends_from(child, parent)
+	local child_path = self:get_full_path(child)
+	return table.has(child_path:split("/"), parent)
+end
 
 function class:new(arguments)
 	local result = arguments
@@ -67,6 +75,11 @@ function class:manipulate_variable(object, key)
 	end
 end
 
+function class:spawn_rid(object)
+	math.randomseed(os.time() + math.random(0, 1024))
+	return "("..tostring(object)..")-(Identifier"..math.random(0x00000000, 0xffffffff)..")"
+end
+
 function class:instance(class_name, ...)
 	local succeed, full_path = self:get_full_path(class_name)
 	if not succeed then
@@ -84,6 +97,8 @@ function class:instance(class_name, ...)
 
 	result.class_name = class_name
 	result.full_class_name = full_path
+	result.rid = self:spawn_rid(result)
+	self.ObjectPool[result.rid] = result
 
 	local function super(self)
 		local paths = self.full_class_name:split("/")
@@ -108,12 +123,15 @@ function class:instance(class_name, ...)
 		return parent
 	end
 	result.super = super
+
+	local data_storage = table.copy(data)
+	data_storage.__data = data
 	
 	local metas = {
 		__index = function(table, key)
 			self:manipulate_variable(table, key)
 			if rawget(table, "__locked") then
-				return self:rawget(table, key)
+				return self:rawget(data_storage, key)
 			end
 			rawget(table, "__lock")()
 			if table.__getters__ ~= nil then
@@ -126,13 +144,13 @@ function class:instance(class_name, ...)
 				end
 			end
 			table.__unlock()
-			return self:rawget(table, key)
+			return self:rawget(data_storage, key)
 		end,
 		__newindex = function(table, key, value)
 			self:manipulate_variable(table, key)
 			data[key] = value
 			if rawget(table, "__locked") then
-				rawset(table, key, value)
+				rawset(data_storage, key, value)
 				return
 			end
 			rawget(table, "__lock")()
@@ -158,17 +176,16 @@ function class:instance(class_name, ...)
 					table.__setters__[key](table, value)
 					table.__unlock()
 					return
-				else
-					if table.__setters__.__any_other__ ~= nil then
-						table.__setters__.__any_other__(table, key, value)
-					end
+				end
+				if table.__setters__.__any_other__ ~= nil and data_storage[key] == nil then
+					table.__setters__.__any_other__(table, key, value)
 				end
 			end
 			table.__unlock()
-			rawset(table, key, value)
+			rawset(data_storage, key, value)
 		end,
 		__pairs = function (table)
-			return pairs(data)
+			return pairs(data_storage)
 		end
 	}
 	if data.__metas__ then
@@ -176,7 +193,9 @@ function class:instance(class_name, ...)
 	end
 	setmetatable(result, metas)
 	
+	result.__lock()
 	result:__constructor__(...)
+	result.__unlock()
 
 	return result
 end

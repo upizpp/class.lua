@@ -152,6 +152,24 @@ function string:get_file()
 	return self
 end
 
+function safe_setmetatable(table, meta)
+	if type(table) == "table" and type(meta) == "table" then
+		setmetatable(table, meta)
+	end	
+end
+
+function safe_call(f, ...)
+	if type(f) == "function" then
+		f(...)
+	end
+end
+
+function table.make_reference(source, target)
+	safe_setmetatable(target, {
+		__index = source,
+		__pairs = source
+	})
+end
 
 function table:join(delimiter)
 	local result = ""

@@ -1,115 +1,108 @@
-class = {}
-class.ObjectPool = {}
+local class = {}
 class.datas = {}
-
 
 require "LuaExtensions"
 
+--- 新建一个类
+---@param members table
+---@return table
+function class:new(members)
+	local class_name = members[1]
+	local extends_from = members[2]
+	local full_class_name = class_name
 
-local function safe_setmetatable(table, meta)
-	if table ~= nil and meta ~= nil then
-		setmetatable(table, meta)
-	end
-end
-
-function class:get_class(class_name)
-	return self.data[self:get_full_path(class_name)]
-end
-
-function class:is_extends_from(child, parent)
-	local child_path = self:get_full_path(child)
-	return table.has(child_path:split("/"), parent)
-end
-
-function class:new(arguments)
-	local result = arguments
-
-	local class_name = arguments[1]
-	local extends_from = arguments[2]
-
-	local succeed, full_path = self:get_full_path(extends_from)
-	if succeed then
-		setmetatable(result, {
-			__index = class.datas[full_path]
-		})
-		safe_setmetatable(result.__setters__, {
-			__index = class.datas[full_path].__setters__
-		})
-		safe_setmetatable(result.__getters__, {
-			__index = class.datas[full_path].__getters__
-		})
-	end
-
+	local result = members
 	result[1] = nil
 	result[2] = nil
-	result.class_name = class_name
-	if result.__constructor__ == nil then
-		result.__constructor__ = function() end
-	end
 
+	if extends_from ~= nil then
+		extends_from = self:get_full_path(extends_from)
+		assert(extends_from ~= "", "Cannot find the class. ("..extends_from..")")
+		full_class_name = extends_from:plus_file(class_name)
+		table.make_reference(self.datas[extends_from], result)
+	end
+	
 	function result:new(...)
 		return class:instance(class_name, ...)
 	end
 
-	self.datas[full_path:plus_file(class_name)] = result
+	self.datas[full_class_name] = result
 	return result
 end
 
-function class:rawget(object, key)
-	local result = rawget(object, key)
-	if result == nil then
-		return rawget(object, "__data")[key]
+function class:has_class(class_name)
+	return class:get_full_path(class_name) ~= ""
+end
+
+---@param class_name string
+---@return string
+function class:get_full_path(class_name)
+	for k, v in pairs(self.datas) do
+		if table.has(k:split("/"), class_name) then
+			return k
+		end
 	end
-	return result
+	return ""
 end
 
-function class:manipulate_variable(object, key)
-	local value = self:rawget(object, key)
-	if self:is_placeholder(value) then
-		local member_object = self:instance(value.__class_name__, table.unpack(value.__arguments__))
-		rawset(member_object, "__ref", {
+---@param class_name string
+function class:get_class(class_name)
+	return self[self:get_full_path(class_name)]
+end
+
+function class:make_placeholder(class_name, ...)
+	assert(self:has_class(class_name), "Cannot find the class. ("..class_name..")")
+	return {
+		__is_placeholder__ = true,
+		__class_name__ = class_name,
+		__args__ = {...}
+	}
+end
+
+function class:is_placeholder(value)
+	return (
+		type(value) == "table" and
+		type(value.__class_name__) == "string" and
+		type(value.__args__) == "table" and
+		value.__is_placeholder__ == true
+	)
+end
+
+function class:handle_variable(object, data, key)
+	if self:is_placeholder(data[key]) then
+		local member_object = self:instance(data[key].__class_name__, table.unpack(data[key].__args__))
+		rawget(member_object, "__datas")["__ref__"] = {
 			["object"] = object,
 			["key"] = key
-		})
-		rawset(object, key, member_object)
+		}
+		rawset(data, key, member_object)
 	end
-end
-
-function class:spawn_rid(object)
-	math.randomseed(os.time() + math.random(0, 1024))
-	return "("..tostring(object)..")-(Identifier"..math.random(0x00000000, 0xffffffff)..")"
 end
 
 function class:instance(class_name, ...)
-	local succeed, full_path = self:get_full_path(class_name)
-	if not succeed then
-		return nil
-	end
-	
+	local full_path = self:get_full_path(class_name)
+	assert(full_path ~= "", "Cannot find the class. ("..class_name..")")
+
 	local data = self.datas[full_path]
+	data.__metas__ = data.__metas__ or {}
 
 	local result = {}
-
-	result.__data = data
+	result.__datas = {}
 	result.__locked = false
 	result.__lock = function() rawset(result, "__locked", true) end
 	result.__unlock = function() rawset(result, "__locked", false) end
-
-	result.class_name = class_name
-	result.full_class_name = full_path
-	result.rid = self:spawn_rid(result)
-	self.ObjectPool[result.rid] = result
+	result.full_class_path = full_path
 
 	local function super(self)
-		local paths = self.full_class_name:split("/")
+		local paths = self.full_class_path:split("/")
 		table.remove(paths, #paths)
 		if #paths == 0 then
 			error("Try to call 'super', but the class has no parent class.")
 		end
-		local full_class_name = table.join(paths, "/")
-		local data = class.datas[full_class_name]
+		local full_class_path = table.join(paths, "/")
+		local data = class.datas[full_class_path]
 		local parent = {}
-		parent.full_class_name = full_class_name
+		parent.full_class_path = full_class_path
 		parent.super = super
 		setmetatable(parent, {
 			__index = function(table, key)
@@ -117,6 +110,8 @@ function class:instance(class_name, ...)
 					return data[key]
 				elseif key == "super" then
 					return super
+				else
+					return result[key]
 				end
 			end
 		})
@@ -124,107 +119,89 @@ function class:instance(class_name, ...)
 	end
 	result.super = super
 
-	local data_storage = table.copy(data)
-	data_storage.__data = data
-	
-	local metas = {
-		__index = function(table, key)
-			self:manipulate_variable(table, key)
-			if rawget(table, "__locked") then
-				return self:rawget(data_storage, key)
-			end
-			rawget(table, "__lock")()
-			if table.__getters__ ~= nil then
-				if table.__getters__[key] ~= nil then
-					local value = table.__getters__[key](table)
-					table.__unlock()
-					return value
-				elseif table.__getters__.__any_other__ ~= nil then
-					return table.__getters__.__any_other__(table, key)
-				end
-			end
-			table.__unlock()
-			return self:rawget(data_storage, key)
-		end,
-		__newindex = function(table, key, value)
-			self:manipulate_variable(table, key)
-			data[key] = value
-			if rawget(table, "__locked") then
-				rawset(data_storage, key, value)
-				return
-			end
-			rawget(table, "__lock")()
-			if table.__ref and table.__ref.object.__setters__ then
-				rawget(table.__ref.object, "__lock")()
-				if table.__ref.object.__setters__.__any__ ~= nil then
-					table.__ref.object.__setters__.__any__(table, table.__ref.key, table)
-				end
-				if table.__ref.object.__setters__[table.__ref.key] ~= nil then
-					table.__ref.object.__setters__[table.__ref.key](table, table)
-				else
-					if table.__ref.object.__setters__.__any_other__ ~= nil then
-						table.__ref.object.__setters__.__any_other__(table, table.__ref.key, table)
-					end
-				end
-				table.__ref.object.__unlock()
-			end
-			if table.__setters__ ~= nil then
-				if table.__setters__.__any__ ~= nil then
-					table.__setters__.__any__(table, key, value)
-				end
-				if table.__setters__[key] ~= nil then
-					table.__setters__[key](table, value)
-					table.__unlock()
-					return
-				end
-				if table.__setters__.__any_other__ ~= nil and data_storage[key] == nil then
-					table.__setters__.__any_other__(table, key, value)
-				end
-			end
-			table.__unlock()
-			rawset(data_storage, key, value)
-		end,
-		__pairs = function (table)
-			return pairs(data_storage)
+	data.__metas__.__index = function(object, key)
+		if rawget(result, "__datas")[key] == nil then
+			rawget(result, "__datas")[key] = data[key]
 		end
-	}
-	if data.__metas__ then
-		metas = table.merge(metas, data.__metas__, false)
+		self:handle_variable(result, rawget(result, "__datas"), key)
+
+		if rawget(result, "__locked") then
+			return rawget(result, "__datas")[key]
+		end
+
+		local getters = data.__getters__
+		if getters ~= nil then
+			rawget(result, "__lock")()
+			if getters.__any__ ~= nil then
+				assert(type(getters.__any__) == "function", "The setter should be a function.")
+				local res = getters.__any__(result, key)
+				if res ~= nil then
+					rawget(result, "__unlock")()
+					return res
+				end
+			end
+			if getters[key] ~= nil then
+				assert(type(getters[key]) == "function", "The getter should be a function.")
+				local res = getters[key](result)
+				if res ~= nil then
+					rawget(result, "__unlock")()
+					return res
+				end
+			elseif getters.__any_other__ ~= nil then
+				assert(type(getters.__any_other__) == "function", "The getter should be a function.")
+				local res = getters.__any_other__(result, key)
+				if res ~= nil then
+					rawget(result, "__unlock")()
+					return res
+				end
+			end
+			rawget(result, "__unlock")()
+		end
+
+		return rawget(result, "__datas")[key]
 	end
-	setmetatable(result, metas)
-	
-	result.__lock()
-	result:__constructor__(...)
-	result.__unlock()
+
+	data.__metas__.__newindex = function(object, key, value)
+		self:handle_variable(result, object, key)
+
+		if rawget(result, "__locked") then
+			rawget(result, "__datas")[key] = value
+			return
+		end
+
+		local setters = data.__setters__
+		if setters ~= nil then
+			rawget(result, "__lock")()
+			if setters.__any__ ~= nil then
+				assert(type(setters.__any__) == "function", "The setter should be a function.")
+				setters.__any__(result, key, value)
+			end
+			if setters[key] ~= nil then
+				assert(type(setters[key]) == "function", "The setter should be a function.")
+				setters[key](result, value)
+			elseif setters.__any_other__ ~= nil then
+				assert(type(setters.__any_other__) == "function", "The setter should be a function.")
+				setters.__any_other__(result, key, value)
+			end
+			rawget(result, "__unlock")()
+		end
+
+		rawget(result, "__datas")[key] = value
+
+		local ref = rawget(result, "__datas").__ref__
+		if ref ~= nil then
+			ref.object[ref.key] = result
+		end
+	end
+
+	safe_setmetatable(result, data.__metas__)
+	safe_call(result.__constructor__, result, ...)
 
 	return result
-end
-
-function class:make_placeholder(class_name, ...)
-	return {
-		__is_placeholder__ = true,
-		__class_name__ = class_name,
-		__arguments__ = {...}
-	}
-end
-
-function class:is_placeholder(value)
-	return type(value) == "table" and value.__is_placeholder__ == true and value.__class_name__ and value.__arguments__
-end
-
-function class:get_full_path(class_name)
-	if class_name == nil then
-		return false, ""
-	end
-	for k, v in pairs(class.datas) do
-		local paths = k:split("/")
-		if paths[#paths] == class_name then
-			return true, k
-		end
-	end
-	return false, class_name
 end
 
 setmetatable(class, {
 	__call = class.new
 })
+
+return class

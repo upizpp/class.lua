@@ -1,4 +1,4 @@
--- StringExtensions.lua:
+-- LuaExtensions.lua:
 ---分割字符串。
 ---@param delimiter string 割符，<strong>它既可以是字符串，也可以是正则表达式。</strong>
 ---@param allow_empty boolean? # 如果为true，结果中就会包含空字符串。
@@ -164,11 +164,15 @@ function safe_call(f, ...)
 	end
 end
 
+if not table.unpack then
+	table.unpack = unpack
+end
+
 function table.make_reference(source, target)
-	safe_setmetatable(target, {
-		__index = source,
-		__pairs = source
-	})
+	local meta = getmetatable(target) or {}
+	meta.__index = source
+	meta.__pairs = source
+	safe_setmetatable(target, meta)
 end
 
 function table:join(delimiter)
@@ -251,6 +255,27 @@ function table.merge(a, b, overwrite)
 		end
 	end
 	return result
+end
+
+---如果表为空，返回true。
+---@param allow_table boolean 如果为true，则表内包含空表的表也为空。
+function table:empty(allow_table)
+	if #self ~= 0 then
+		return false
+	end
+	for key, value in pairs(self) do
+		if not allow_table then
+			return false
+		end
+		if type(value) == "table" then
+			if not table.empty(value, allow_table) then
+				return false
+			end
+		else
+			return false
+		end
+	end
+	return true
 end
 
 ---新建一个枚举
